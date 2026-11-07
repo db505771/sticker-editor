@@ -1,0 +1,630 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+
+<meta name="viewport"
+content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+
+<title>Fatty Family Stickers</title>
+
+<style>
+
+* {
+    box-sizing: border-box;
+    -webkit-tap-highlight-color: transparent;
+}
+
+html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    min-height: 100%;
+    background: transparent !important;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    color: white;
+}
+
+body {
+    overflow-x: hidden;
+    background: transparent !important;
+}
+
+#board {
+    position: relative;
+    width: 100%;
+    min-height: 100vh;
+    background: transparent !important;
+    z-index: 1;
+}
+
+.placed-sticker {
+    position: absolute;
+    width: 100px;
+    height: 100px;
+    object-fit: contain;
+    user-select: none;
+    -webkit-user-drag: none;
+    cursor: pointer;
+    pointer-events: auto;
+    z-index: 10;
+}
+
+#stickerTray {
+    position: fixed;
+    z-index: 9999;
+    bottom: 12px;
+    left: 12px;
+    right: 12px;
+
+    display: flex;
+    align-items: center;
+    gap: 14px;
+
+    padding: 8px 2px;
+    overflow-x: auto;
+    overflow-y: hidden;
+
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+
+    scrollbar-width: none;
+}
+
+#stickerTray::-webkit-scrollbar {
+    display: none;
+}
+
+.sticker-option {
+    flex: 0 0 76px;
+    width: 76px;
+    min-height: 88px;
+
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+
+    background: transparent !important;
+    border: none;
+    color: white;
+    padding: 3px;
+}
+
+.sticker-option.selected {
+    outline: 1px solid rgba(255,255,255,.85);
+    outline-offset: 2px;
+}
+
+.sticker-option img {
+    width: 55px;
+    height: 55px;
+    object-fit: contain;
+    pointer-events: none;
+}
+
+.sticker-name {
+    max-width: 75px;
+    font-size: 10px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.sticker-quantity {
+    font-size: 11px;
+    color: rgba(255,255,255,.8);
+}
+
+#status {
+    position: fixed;
+    z-index: 10001;
+    top: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    max-width: calc(100% - 24px);
+    padding: 8px 12px;
+    background: transparent !important;
+    color: white;
+    font-size: 12px;
+    text-align: center;
+    text-shadow: 0 1px 4px black;
+    display: none;
+}
+
+#emptyMessage {
+    width: 100%;
+    text-align: center;
+    font-size: 12px;
+    color: white;
+}
+
+</style>
+</head>
+
+<body>
+
+<div id="board"></div>
+<div id="status"></div>
+
+<div id="stickerTray">
+    <div id="emptyMessage">Loading stickers...</div>
+</div>
+
+<script>
+
+/* =====================================
+   CONFIGURATION
+===================================== */
+
+const API =
+"https://script.google.com/macros/s/AKfycbwmhyUcGkUlcLSu9JJAph3V4eoACp1afq5KaTpcAWKAgK8BqrP1v_MNMySEGgkr0E2suQ/exec";
+
+const board = document.getElementById("board");
+const tray = document.getElementById("stickerTray");
+const statusBox = document.getElementById("status");
+
+let STICKER_LIBRARY = [];
+let BOARD_STICKERS = [];
+let INVENTORY = [];
+
+let selectedStickerName = null;
+let isSaving = false;
+
+
+/* =====================================
+   STATUS
+===================================== */
+
+function showStatus(message) {
+    statusBox.textContent = message;
+    statusBox.style.display = "block";
+
+    clearTimeout(showStatus.timer);
+
+    showStatus.timer = setTimeout(() => {
+        statusBox.style.display = "none";
+    }, 2000);
+}
+
+
+/* =====================================
+   API
+===================================== */
+
+function api(action, params = {}) {
+
+    return new Promise((resolve, reject) => {
+
+        const callbackName =
+            "sticker_" + Date.now() + "_" +
+            Math.floor(Math.random() * 100000);
+
+        const script = document.createElement("script");
+
+        const query = new URLSearchParams({
+            action,
+            ...params,
+            callback: callbackName
+        });
+
+        script.src = API + "?" + query.toString();
+
+        const timeout = setTimeout(() => {
+            cleanup();
+            reject(new Error("Request timed out."));
+        }, 20000);
+
+        function cleanup() {
+            clearTimeout(timeout);
+            delete window[callbackName];
+            script.remove();
+        }
+
+        window[callbackName] = data => {
+
+            cleanup();
+
+            if (!data || data.success === false) {
+                reject(new Error(data?.error || "Server error."));
+                return;
+            }
+
+            resolve(data);
+
+        };
+
+        script.onerror = () => {
+            cleanup();
+            reject(new Error("Connection failed."));
+        };
+
+        document.body.appendChild(script);
+
+    });
+
+}
+
+
+/* =====================================
+   LIBRARY
+===================================== */
+
+function findLibrary(name) {
+    return STICKER_LIBRARY.find(item =>
+        item.name.toLowerCase() === name.toLowerCase()
+    );
+}
+
+
+/* =====================================
+   INITIAL LOAD
+===================================== */
+
+async function start() {
+
+    try {
+
+        const result = await api("getInitialData");
+
+        STICKER_LIBRARY = result.library || [];
+
+        buildBoard(result.stickers || []);
+
+        renderBoard();
+        renderInventory();
+
+    } catch (error) {
+
+        console.error(error);
+
+        showStatus("Loading error: " + error.message);
+
+        tray.innerHTML =
+            '<div id="emptyMessage">Unable to load stickers.</div>';
+
+    }
+
+}
+
+
+/* =====================================
+   BUILD BOARD
+===================================== */
+
+function buildBoard(data) {
+
+    INVENTORY = [];
+    BOARD_STICKERS = [];
+
+    data.forEach(item => {
+
+        const librarySticker = findLibrary(item.name);
+
+        if (!librarySticker) return;
+
+        INVENTORY.push({
+            name: item.name,
+            quantity: Number(item.quantity) || 0
+        });
+
+        (item.placements || []).forEach(placement => {
+
+            BOARD_STICKERS.push({
+                name: item.name,
+                imageUrl: librarySticker.imageUrl,
+                index: Number(placement.index),
+                x: Number(placement.x),
+                y: Number(placement.y)
+            });
+
+        });
+
+    });
+
+}
+
+
+/* =====================================
+   RENDER BOARD
+===================================== */
+
+function renderBoard() {
+
+    board.innerHTML = "";
+
+    BOARD_STICKERS.forEach(item => {
+
+        const img = document.createElement("img");
+
+        img.src = item.imageUrl;
+        img.className = "placed-sticker";
+        img.alt = item.name;
+        img.draggable = false;
+
+        img.style.left = item.x + "px";
+        img.style.top = item.y + "px";
+
+        img.addEventListener("click", event => {
+            event.stopPropagation();
+            returnSticker(item);
+        });
+
+        board.appendChild(img);
+
+    });
+
+}
+
+
+/* =====================================
+   RENDER INVENTORY
+===================================== */
+
+function renderInventory() {
+
+    tray.innerHTML = "";
+
+    const available = INVENTORY.filter(item =>
+        item.quantity > 0
+    );
+
+    if (!available.length) {
+
+        tray.innerHTML =
+            '<div id="emptyMessage">No stickers available.</div>';
+
+        return;
+
+    }
+
+    available.forEach(item => {
+
+        const sticker = findLibrary(item.name);
+
+        if (!sticker) return;
+
+        const button = document.createElement("button");
+
+        button.type = "button";
+        button.className = "sticker-option";
+
+        if (selectedStickerName === item.name) {
+            button.classList.add("selected");
+        }
+
+        const img = document.createElement("img");
+        img.src = sticker.imageUrl;
+
+        const name = document.createElement("div");
+        name.className = "sticker-name";
+        name.textContent = item.name;
+
+        const quantity = document.createElement("div");
+        quantity.className = "sticker-quantity";
+        quantity.textContent = item.quantity + "x";
+
+        button.append(img, name, quantity);
+
+        button.addEventListener("click", () => {
+
+            selectedStickerName = item.name;
+
+            renderInventory();
+
+            showStatus("Tap your profile to place " + item.name + ".");
+
+        });
+
+        tray.appendChild(button);
+
+    });
+
+}
+
+
+/* =====================================
+   PLACE
+===================================== */
+
+board.addEventListener("click", async event => {
+
+    if (!selectedStickerName || isSaving) return;
+
+    const rect = board.getBoundingClientRect();
+
+    const x = Math.max(0, Math.round(
+        event.clientX - rect.left - 50
+    ));
+
+    const y = Math.max(0, Math.round(
+        event.clientY - rect.top - 50
+    ));
+
+    await placeSticker(selectedStickerName, x, y);
+
+});
+
+
+async function placeSticker(name, x, y) {
+
+    if (isSaving) return;
+
+    const inventoryItem = INVENTORY.find(item =>
+        item.name === name
+    );
+
+    const librarySticker = findLibrary(name);
+
+    if (!inventoryItem || inventoryItem.quantity < 1) {
+        selectedStickerName = null;
+        renderInventory();
+        return;
+    }
+
+    if (!librarySticker) {
+        showStatus("Sticker image unavailable.");
+        return;
+    }
+
+    isSaving = true;
+
+    const oldQuantity = inventoryItem.quantity;
+
+    // Instant visual update.
+    inventoryItem.quantity--;
+
+    const temporarySticker = {
+        name: name,
+        imageUrl: librarySticker.imageUrl,
+        index: null,
+        x: x,
+        y: y,
+        pending: true
+    };
+
+    BOARD_STICKERS.push(temporarySticker);
+
+    selectedStickerName = null;
+
+    renderBoard();
+    renderInventory();
+
+    try {
+
+        const result = await api("place", {
+            sticker: name,
+            x: x,
+            y: y
+        });
+
+        temporarySticker.index = result.index;
+        temporarySticker.pending = false;
+
+        // Update indexes for this sticker.
+        BOARD_STICKERS
+            .filter(item => item.name === name)
+            .sort((a, b) => {
+                if (a === temporarySticker) return 1;
+                if (b === temporarySticker) return -1;
+                return a.index - b.index;
+            })
+            .forEach((item, i) => {
+                if (item !== temporarySticker && item.index === null) {
+                    item.index = i + 1;
+                }
+            });
+
+        showStatus("Sticker saved!");
+
+    } catch (error) {
+
+        BOARD_STICKERS = BOARD_STICKERS.filter(
+            item => item !== temporarySticker
+        );
+
+        inventoryItem.quantity = oldQuantity;
+
+        selectedStickerName = name;
+
+        renderBoard();
+        renderInventory();
+
+        showStatus("Couldn't save: " + error.message);
+
+    } finally {
+
+        isSaving = false;
+
+    }
+
+}
+
+
+/* =====================================
+   REMOVE
+===================================== */
+
+async function returnSticker(item) {
+
+    if (isSaving) return;
+
+    if (!Number.isInteger(item.index) || item.index < 1) {
+        showStatus("Please wait for the sticker to finish saving.");
+        return;
+    }
+
+    isSaving = true;
+
+    const oldBoard = BOARD_STICKERS.slice();
+
+    const inventoryItem = INVENTORY.find(entry =>
+        entry.name === item.name
+    );
+
+    if (!inventoryItem) {
+        isSaving = false;
+        return;
+    }
+
+    const oldQuantity = inventoryItem.quantity;
+
+    // Instant visual update.
+    BOARD_STICKERS = BOARD_STICKERS.filter(
+        sticker => sticker !== item
+    );
+
+    inventoryItem.quantity++;
+
+    renderBoard();
+    renderInventory();
+
+    try {
+
+        await api("remove", {
+            sticker: item.name,
+            index: item.index
+        });
+
+        // Refresh indexes in the background.
+        const result = await api("getBoard");
+
+        buildBoard(result.stickers || []);
+
+        renderBoard();
+        renderInventory();
+
+        showStatus("Sticker returned!");
+
+    } catch (error) {
+
+        BOARD_STICKERS = oldBoard;
+        inventoryItem.quantity = oldQuantity;
+
+        renderBoard();
+        renderInventory();
+
+        showStatus("Couldn't remove: " + error.message);
+
+    } finally {
+
+        isSaving = false;
+
+    }
+
+}
+
+
+/* =====================================
+   START
+===================================== */
+
+start();
+
+</script>
+
+</body>
+</html>
