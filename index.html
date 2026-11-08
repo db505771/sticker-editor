@@ -266,7 +266,7 @@ function api(action, params = {}) {
 
 
 /* =====================================
-   POST SAVE - FIXED WITH FETCH
+   POST SAVE - FETCH
 ===================================== */
 
 async function postBoard(payload) {
@@ -297,8 +297,10 @@ async function postBoard(payload) {
 ===================================== */
 
 function findLibrary(name) {
+    if (!name) return null;
+    const cleanName = String(name).trim().toLowerCase();
     return STICKER_LIBRARY.find(item =>
-        item.name.toLowerCase() === name.toLowerCase()
+        String(item.name).trim().toLowerCase() === cleanName
     );
 }
 
@@ -655,7 +657,6 @@ function placeSticker(name, x, y) {
         y: y
     });
 
-    // Keep selectedStickerName active if quantity remains > 0
     if (inventoryItem.quantity <= 0) {
         selectedStickerName = null;
     }
