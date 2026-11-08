@@ -92,6 +92,7 @@ body {
     border: none;
     color: white;
     padding: 3px;
+    cursor: pointer;
 }
 
 .sticker-option.selected {
@@ -129,7 +130,8 @@ body {
     max-width: calc(100% - 24px);
     padding: 8px 12px;
 
-    background: transparent !important;
+    background: rgba(0, 0, 0, 0.6);
+    border-radius: 6px;
     color: white;
 
     font-size: 12px;
@@ -187,10 +189,8 @@ let revision = 0;
 let savedRevision = 0;
 
 let isSaving = false;
-
 let saveTimer = null;
 let retryTimer = null;
-
 let retryCount = 0;
 let initialized = false;
 
@@ -234,51 +234,29 @@ function api(action, params = {}) {
         script.src = API + "?" + query.toString();
 
         const timeout = setTimeout(() => {
-
             cleanup();
             reject(new Error("Request timed out."));
-
         }, 25000);
 
-
         function cleanup() {
-
             clearTimeout(timeout);
-
             delete window[callbackName];
-
             script.remove();
-
         }
 
-
         window[callbackName] = data => {
-
             cleanup();
-
             if (!data || data.success === false) {
-
-                reject(
-                    new Error(data?.error || "Server error.")
-                );
-
+                reject(new Error(data?.error || "Server error."));
                 return;
-
             }
-
             resolve(data);
-
         };
-
 
         script.onerror = () => {
-
             cleanup();
-
             reject(new Error("Connection failed."));
-
         };
-
 
         document.body.appendChild(script);
 
@@ -288,151 +266,29 @@ function api(action, params = {}) {
 
 
 /* =====================================
-   POST SAVE - FIXED
+   POST SAVE - FIXED WITH FETCH
 ===================================== */
 
-function postBoard(payload) {
-
-    return new Promise((resolve, reject) => {
-
-        const frameName =
-            "sticker_save_" +
-            Date.now() +
-            "_" +
-            Math.floor(Math.random() * 100000);
-
-
-        const frame = document.createElement("iframe");
-
-        frame.name = frameName;
-
-        frame.src = "about:blank";
-
-        frame.style.position = "absolute";
-        frame.style.width = "1px";
-        frame.style.height = "1px";
-        frame.style.opacity = "0";
-        frame.style.pointerEvents = "none";
-
-        frame.style.border = "0";
-
-        const form = document.createElement("form");
-
-        form.method = "POST";
-        form.action = API;
-        form.target = frameName;
-        form.style.display = "none";
-
-
-        const actionInput = document.createElement("input");
-
-        actionInput.type = "hidden";
-        actionInput.name = "action";
-        actionInput.value = "saveBoard";
-
-
-        const payloadInput = document.createElement("input");
-
-        payloadInput.type = "hidden";
-        payloadInput.name = "payload";
-        payloadInput.value = JSON.stringify(payload);
-
-
-        form.appendChild(actionInput);
-        form.appendChild(payloadInput);
-
-
-        let submitted = false;
-        let finished = false;
-
-        let timeout;
-
-
-        function cleanup() {
-
-            if (finished) return;
-
-            finished = true;
-
-            clearTimeout(timeout);
-
-            frame.removeEventListener("load", handleLoad);
-
-            form.remove();
-            frame.remove();
-
-        }
-
-
-        function fail(error) {
-
-            cleanup();
-
-            reject(error);
-
-        }
-
-
-        function handleLoad() {
-
-            // First load is the blank iframe.
-            // Only submit after that load finishes.
-
-            if (!submitted) {
-
-                submitted = true;
-
-                setTimeout(() => {
-
-                    if (finished) return;
-
-                    try {
-
-                        form.submit();
-
-                    } catch (error) {
-
-                        fail(error);
-
-                    }
-
-                }, 100);
-
-                return;
-
-            }
-
-
-            // A later load means the POST navigated
-            // the iframe to the Apps Script response.
-
-            cleanup();
-
-            resolve();
-
-        }
-
-
-        frame.addEventListener("load", handleLoad);
-
-
-        // Start timeout BEFORE waiting for the iframe.
-
-        timeout = setTimeout(() => {
-
-            fail(
-                new Error("Google Sheets save request timed out.")
-            );
-
-        }, 30000);
-
-
-        document.body.appendChild(frame);
-
-        document.body.appendChild(form);
-
+async function postBoard(payload) {
+    const formData = new FormData();
+    formData.append("action", "saveBoard");
+    formData.append("payload", JSON.stringify(payload));
+
+    const response = await fetch(API, {
+        method: "POST",
+        body: formData
     });
 
+    if (!response.ok) {
+        throw new Error("Network error during save.");
+    }
+
+    const result = await response.json();
+    if (!result || result.success === false) {
+        throw new Error(result?.error || "Save failed on server.");
+    }
+
+    return result;
 }
 
 
@@ -441,14 +297,9 @@ function postBoard(payload) {
 ===================================== */
 
 function findLibrary(name) {
-
     return STICKER_LIBRARY.find(item =>
-
-        item.name.toLowerCase() ===
-        name.toLowerCase()
-
+        item.name.toLowerCase() === name.toLowerCase()
     );
-
 }
 
 
@@ -479,21 +330,16 @@ async function start() {
         showStatus("Stickers loaded!");
 
         setTimeout(() => {
-
             if (!isSaving && revision === savedRevision) {
                 hideStatus();
             }
-
         }, 1500);
 
     } catch (error) {
 
         console.error(error);
-
         showStatus("Loading error: " + error.message);
-
-        tray.innerHTML =
-            '<div id="emptyMessage">Unable to load stickers.</div>';
+        tray.innerHTML = '<div id="emptyMessage">Unable to load stickers.</div>';
 
     }
 
@@ -516,28 +362,18 @@ function buildBoard(data) {
         if (!librarySticker) return;
 
         INVENTORY.push({
-
             name: item.name,
-
             quantity: Number(item.quantity) || 0
-
         });
-
 
         (item.placements || []).forEach(placement => {
 
             BOARD_STICKERS.push({
-
                 name: item.name,
-
                 imageUrl: librarySticker.imageUrl,
-
                 index: Number(placement.index),
-
                 x: Number(placement.x),
-
                 y: Number(placement.y)
-
             });
 
         });
@@ -560,26 +396,16 @@ function renderBoard() {
         const img = document.createElement("img");
 
         img.src = item.imageUrl;
-
         img.className = "placed-sticker";
-
         img.alt = item.name;
-
         img.draggable = false;
-
         img.style.left = item.x + "px";
-
         img.style.top = item.y + "px";
 
-
         img.addEventListener("click", event => {
-
             event.stopPropagation();
-
             returnSticker(item);
-
         });
-
 
         board.appendChild(img);
 
@@ -596,22 +422,12 @@ function renderInventory() {
 
     tray.innerHTML = "";
 
-    const available = INVENTORY.filter(item =>
-
-        item.quantity > 0
-
-    );
-
+    const available = INVENTORY.filter(item => item.quantity > 0);
 
     if (!available.length) {
-
-        tray.innerHTML =
-            '<div id="emptyMessage">No stickers available.</div>';
-
+        tray.innerHTML = '<div id="emptyMessage">No stickers available.</div>';
         return;
-
     }
-
 
     available.forEach(item => {
 
@@ -619,57 +435,33 @@ function renderInventory() {
 
         if (!sticker) return;
 
-
         const button = document.createElement("button");
 
         button.type = "button";
-
         button.className = "sticker-option";
 
-
         if (selectedStickerName === item.name) {
-
             button.classList.add("selected");
-
         }
 
-
         const img = document.createElement("img");
-
         img.src = sticker.imageUrl;
 
-
         const name = document.createElement("div");
-
         name.className = "sticker-name";
-
         name.textContent = item.name;
 
-
         const quantity = document.createElement("div");
-
         quantity.className = "sticker-quantity";
-
         quantity.textContent = item.quantity + "x";
-
 
         button.append(img, name, quantity);
 
-
         button.addEventListener("click", () => {
-
             selectedStickerName = item.name;
-
             renderInventory();
-
-            showStatus(
-                "Tap your profile to place " +
-                item.name +
-                "."
-            );
-
+            showStatus("Tap board to place " + item.name + ".");
         });
-
 
         tray.appendChild(button);
 
@@ -685,156 +477,19 @@ function renderInventory() {
 function createSnapshot() {
 
     return {
-
         stickers: INVENTORY.map(item => {
-
             return {
-
                 name: item.name,
-
                 quantity: item.quantity,
-
                 placements: BOARD_STICKERS
-
-                    .filter(sticker =>
-                        sticker.name === item.name
-                    )
-
+                    .filter(sticker => sticker.name === item.name)
                     .map(sticker => ({
-
                         x: sticker.x,
-
                         y: sticker.y
-
                     }))
-
             };
-
         })
-
     };
-
-}
-
-
-/* =====================================
-   VERIFY SAVED BOARD
-===================================== */
-
-function boardsMatch(expected, actual) {
-
-    if (!actual || !Array.isArray(actual.stickers)) {
-        return false;
-    }
-
-
-    for (const item of expected.stickers) {
-
-        const saved = actual.stickers.find(sticker =>
-
-            sticker.name.toLowerCase() ===
-            item.name.toLowerCase()
-
-        );
-
-        if (!saved) return false;
-
-
-        if (
-            Number(saved.quantity) !==
-            Number(item.quantity)
-        ) {
-            return false;
-        }
-
-
-        const expectedPositions = item.placements || [];
-
-        const savedPositions = saved.placements || [];
-
-
-        if (
-            expectedPositions.length !==
-            savedPositions.length
-        ) {
-            return false;
-        }
-
-
-        for (
-            let i = 0;
-            i < expectedPositions.length;
-            i++
-        ) {
-
-            if (
-
-                Number(expectedPositions[i].x) !==
-                Number(savedPositions[i].x) ||
-
-                Number(expectedPositions[i].y) !==
-                Number(savedPositions[i].y)
-
-            ) {
-
-                return false;
-
-            }
-
-        }
-
-    }
-
-    return true;
-
-}
-
-
-/* =====================================
-   VERIFY WITH RETRIES
-===================================== */
-
-async function verifySavedBoard(snapshot) {
-
-    let lastError = null;
-
-    for (let attempt = 0; attempt < 8; attempt++) {
-
-        try {
-
-            const result = await api("getBoard");
-
-            if (boardsMatch(snapshot, result)) {
-
-                return true;
-
-            }
-
-        } catch (error) {
-
-            lastError = error;
-
-        }
-
-
-        // Give Google Sheets more time to finish writing.
-
-        await new Promise(resolve =>
-
-            setTimeout(resolve, 900)
-
-        );
-
-    }
-
-
-    if (lastError) {
-
-        throw lastError;
-
-    }
-
-    return false;
 
 }
 
@@ -848,15 +503,11 @@ function updateIndexes() {
     INVENTORY.forEach(item => {
 
         const matching = BOARD_STICKERS.filter(sticker =>
-
             sticker.name === item.name
-
         );
 
         matching.forEach((sticker, index) => {
-
             sticker.index = index + 1;
-
         });
 
     });
@@ -875,7 +526,6 @@ function scheduleSave() {
     revision++;
 
     clearTimeout(saveTimer);
-
     clearTimeout(retryTimer);
 
     retryCount = 0;
@@ -883,9 +533,7 @@ function scheduleSave() {
     showStatus("Unsaved changes...");
 
     saveTimer = setTimeout(() => {
-
         flushSave();
-
     }, 500);
 
 }
@@ -898,110 +546,57 @@ function scheduleSave() {
 async function flushSave() {
 
     if (!initialized) return;
-
     if (isSaving) return;
-
     if (revision === savedRevision) return;
 
-
     isSaving = true;
-
     const savingRevision = revision;
-
     const snapshot = createSnapshot();
-
 
     showStatus("Saving stickers...");
 
-
     try {
-
-        // Send the complete board.
 
         await postBoard(snapshot);
 
-
-        // Check that Google Sheets actually saved it.
-
-        const verified = await verifySavedBoard(snapshot);
-
-
-        if (!verified) {
-
-            throw new Error(
-                "Google Sheets could not confirm the save."
-            );
-
-        }
-
-
         savedRevision = savingRevision;
-
         retryCount = 0;
 
-
         if (revision === savingRevision) {
-
             updateIndexes();
-
             showStatus("Saved!");
 
             setTimeout(() => {
-
-                if (
-                    !isSaving &&
-                    revision === savedRevision
-                ) {
-
+                if (!isSaving && revision === savedRevision) {
                     hideStatus();
-
                 }
-
             }, 1800);
-
         }
 
     } catch (error) {
 
         console.error("Sticker save failed:", error);
-
         retryCount++;
-
-        showStatus(
-            "Save failed. Retrying..."
-        );
+        showStatus("Save failed. Retrying...");
 
     } finally {
-
         isSaving = false;
-
     }
-
-
-    // Save any changes made while the previous
-    // request was still running.
 
     if (revision !== savedRevision) {
 
         if (retryCount > 0) {
-
             const delay = Math.min(
                 30000,
                 1500 * Math.pow(2, Math.min(retryCount - 1, 5))
             );
 
             clearTimeout(retryTimer);
-
             retryTimer = setTimeout(() => {
-
                 flushSave();
-
             }, delay);
-
         } else {
-
             flushSave();
-
         }
 
     }
@@ -1036,64 +631,37 @@ board.addEventListener("click", event => {
 
 function placeSticker(name, x, y) {
 
-    const inventoryItem = INVENTORY.find(item =>
-
-        item.name === name
-
-    );
-
+    const inventoryItem = INVENTORY.find(item => item.name === name);
     const librarySticker = findLibrary(name);
 
-
-    if (
-        !inventoryItem ||
-        inventoryItem.quantity < 1
-    ) {
-
+    if (!inventoryItem || inventoryItem.quantity < 1) {
         selectedStickerName = null;
-
         renderInventory();
-
         return;
-
     }
-
 
     if (!librarySticker) {
-
         showStatus("Sticker image unavailable.");
-
         return;
-
     }
-
 
     inventoryItem.quantity--;
 
-
     BOARD_STICKERS.push({
-
         name: name,
-
         imageUrl: librarySticker.imageUrl,
-
         index: null,
-
         x: x,
-
         y: y
-
     });
 
-
-    selectedStickerName = null;
-
+    // Keep selectedStickerName active if quantity remains > 0
+    if (inventoryItem.quantity <= 0) {
+        selectedStickerName = null;
+    }
 
     renderBoard();
-
     renderInventory();
-
-
     scheduleSave();
 
 }
@@ -1106,29 +674,19 @@ function placeSticker(name, x, y) {
 function returnSticker(item) {
 
     const inventoryItem = INVENTORY.find(entry =>
-
         entry.name === item.name
-
     );
 
     if (!inventoryItem) return;
 
-
     BOARD_STICKERS = BOARD_STICKERS.filter(sticker =>
-
         sticker !== item
-
     );
-
 
     inventoryItem.quantity++;
 
-
     renderBoard();
-
     renderInventory();
-
-
     scheduleSave();
 
 }
@@ -1141,17 +699,11 @@ function returnSticker(item) {
 window.addEventListener("online", () => {
 
     if (revision !== savedRevision) {
-
         showStatus("Connection restored. Saving...");
-
         clearTimeout(retryTimer);
-
         retryTimer = setTimeout(() => {
-
             flushSave();
-
         }, 300);
-
     }
 
 });
