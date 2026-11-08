@@ -1,6 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
+
 <meta charset="UTF-8">
 
 <meta name="viewport"
@@ -127,11 +129,14 @@ body {
     transform: translateX(-50%);
     max-width: calc(100% - 24px);
     padding: 8px 12px;
+
     background: transparent !important;
     color: white;
+
     font-size: 12px;
     text-align: center;
     text-shadow: 0 1px 4px black;
+
     display: none;
 }
 
@@ -143,16 +148,19 @@ body {
 }
 
 </style>
+
 </head>
 
 <body>
 
 <div id="board"></div>
+
 <div id="status"></div>
 
 <div id="stickerTray">
     <div id="emptyMessage">Loading stickers...</div>
 </div>
+
 
 <script>
 
@@ -164,15 +172,37 @@ const API =
 "https://script.google.com/macros/s/AKfycbwmhyUcGkUlcLSu9JJAph3V4eoACp1afq5KaTpcAWKAgK8BqrP1v_MNMySEGgkr0E2suQ/exec";
 
 const board = document.getElementById("board");
+
 const tray = document.getElementById("stickerTray");
+
 const statusBox = document.getElementById("status");
 
+
+/* =====================================
+   STATE
+===================================== */
+
 let STICKER_LIBRARY = [];
+
 let BOARD_STICKERS = [];
+
 let INVENTORY = [];
 
 let selectedStickerName = null;
+
+let revision = 0;
+
+let savedRevision = 0;
+
 let isSaving = false;
+
+let saveTimer = null;
+
+let retryTimer = null;
+
+let retryCount = 0;
+
+let initialized = false;
 
 
 /* =====================================
@@ -180,19 +210,23 @@ let isSaving = false;
 ===================================== */
 
 function showStatus(message) {
+
     statusBox.textContent = message;
+
     statusBox.style.display = "block";
 
-    clearTimeout(showStatus.timer);
+}
 
-    showStatus.timer = setTimeout(() => {
-        statusBox.style.display = "none";
-    }, 2000);
+
+function hideStatus() {
+
+    statusBox.style.display = "none";
+
 }
 
 
 /* =====================================
-   API
+   GET API - JSONP
 ===================================== */
 
 function api(action, params = {}) {
@@ -200,7 +234,9 @@ function api(action, params = {}) {
     return new Promise((resolve, reject) => {
 
         const callbackName =
-            "sticker_" + Date.now() + "_" +
+            "sticker_" +
+            Date.now() +
+            "_" +
             Math.floor(Math.random() * 100000);
 
         const script = document.createElement("script");
@@ -214,35 +250,186 @@ function api(action, params = {}) {
         script.src = API + "?" + query.toString();
 
         const timeout = setTimeout(() => {
+
             cleanup();
+
             reject(new Error("Request timed out."));
-        }, 20000);
+
+        }, 25000);
+
 
         function cleanup() {
+
             clearTimeout(timeout);
+
             delete window[callbackName];
+
             script.remove();
+
         }
+
 
         window[callbackName] = data => {
 
             cleanup();
 
             if (!data || data.success === false) {
-                reject(new Error(data?.error || "Server error."));
+
+                reject(
+                    new Error(data?.error || "Server error.")
+                );
+
                 return;
+
             }
 
             resolve(data);
 
         };
 
+
         script.onerror = () => {
+
             cleanup();
+
             reject(new Error("Connection failed."));
+
         };
 
+
         document.body.appendChild(script);
+
+    });
+
+}
+
+
+/* =====================================
+   POST SAVE
+   Uses a hidden iframe because Apps
+   Script POST responses are cross-origin.
+===================================== */
+
+function postBoard(payload) {
+
+    return new Promise((resolve, reject) => {
+
+        const frameName =
+            "sticker_save_" +
+            Date.now() +
+            "_" +
+            Math.floor(Math.random() * 100000);
+
+        const frame = document.createElement("iframe");
+
+        frame.name = frameName;
+
+        frame.style.position = "absolute";
+        frame.style.width = "1px";
+        frame.style.height = "1px";
+        frame.style.opacity = "0";
+        frame.style.pointerEvents = "none";
+
+        document.body.appendChild(frame);
+
+
+        const form = document.createElement("form");
+
+        form.method = "POST";
+
+        form.action = API;
+
+        form.target = frameName;
+
+        form.style.display = "none";
+
+
+        const actionInput = document.createElement("input");
+
+        actionInput.type = "hidden";
+        actionInput.name = "action";
+        actionInput.value = "saveBoard";
+
+
+        const payloadInput = document.createElement("input");
+
+        payloadInput.type = "hidden";
+        payloadInput.name = "payload";
+        payloadInput.value = JSON.stringify(payload);
+
+
+        form.appendChild(actionInput);
+
+        form.appendChild(payloadInput);
+
+        document.body.appendChild(form);
+
+
+        let finished = false;
+
+
+        function cleanup() {
+
+            if (finished) return;
+
+            finished = true;
+
+            frame.removeEventListener("load", onLoad);
+
+            form.remove();
+
+            frame.remove();
+
+        }
+
+
+        function onLoad() {
+
+            cleanup();
+
+            resolve();
+
+        }
+
+
+        frame.addEventListener("load", onLoad);
+
+
+        const timeout = setTimeout(() => {
+
+            cleanup();
+
+            resolve();
+
+        }, 20000);
+
+
+        const originalCleanup = cleanup;
+
+        cleanup = function() {
+
+            clearTimeout(timeout);
+
+            originalCleanup();
+
+        };
+
+
+        setTimeout(() => {
+
+            try {
+
+                form.submit();
+
+            } catch (error) {
+
+                cleanup();
+
+                reject(error);
+
+            }
+
+        }, 100);
 
     });
 
@@ -254,9 +441,14 @@ function api(action, params = {}) {
 ===================================== */
 
 function findLibrary(name) {
+
     return STICKER_LIBRARY.find(item =>
-        item.name.toLowerCase() === name.toLowerCase()
+
+        item.name.toLowerCase() ===
+        name.toLowerCase()
+
     );
+
 }
 
 
@@ -268,6 +460,8 @@ async function start() {
 
     try {
 
+        showStatus("Loading stickers...");
+
         const result = await api("getInitialData");
 
         STICKER_LIBRARY = result.library || [];
@@ -275,7 +469,22 @@ async function start() {
         buildBoard(result.stickers || []);
 
         renderBoard();
+
         renderInventory();
+
+        initialized = true;
+
+        savedRevision = revision;
+
+        showStatus("Stickers loaded!");
+
+        setTimeout(() => {
+
+            if (!isSaving && revision === savedRevision) {
+                hideStatus();
+            }
+
+        }, 1500);
 
     } catch (error) {
 
@@ -298,6 +507,7 @@ async function start() {
 function buildBoard(data) {
 
     INVENTORY = [];
+
     BOARD_STICKERS = [];
 
     data.forEach(item => {
@@ -307,18 +517,28 @@ function buildBoard(data) {
         if (!librarySticker) return;
 
         INVENTORY.push({
+
             name: item.name,
+
             quantity: Number(item.quantity) || 0
+
         });
+
 
         (item.placements || []).forEach(placement => {
 
             BOARD_STICKERS.push({
+
                 name: item.name,
+
                 imageUrl: librarySticker.imageUrl,
+
                 index: Number(placement.index),
+
                 x: Number(placement.x),
+
                 y: Number(placement.y)
+
             });
 
         });
@@ -341,17 +561,26 @@ function renderBoard() {
         const img = document.createElement("img");
 
         img.src = item.imageUrl;
+
         img.className = "placed-sticker";
+
         img.alt = item.name;
+
         img.draggable = false;
 
         img.style.left = item.x + "px";
+
         img.style.top = item.y + "px";
 
+
         img.addEventListener("click", event => {
+
             event.stopPropagation();
+
             returnSticker(item);
+
         });
+
 
         board.appendChild(img);
 
@@ -369,8 +598,11 @@ function renderInventory() {
     tray.innerHTML = "";
 
     const available = INVENTORY.filter(item =>
+
         item.quantity > 0
+
     );
+
 
     if (!available.length) {
 
@@ -381,33 +613,49 @@ function renderInventory() {
 
     }
 
+
     available.forEach(item => {
 
         const sticker = findLibrary(item.name);
 
         if (!sticker) return;
 
+
         const button = document.createElement("button");
 
         button.type = "button";
+
         button.className = "sticker-option";
 
+
         if (selectedStickerName === item.name) {
+
             button.classList.add("selected");
+
         }
 
+
         const img = document.createElement("img");
+
         img.src = sticker.imageUrl;
 
+
         const name = document.createElement("div");
+
         name.className = "sticker-name";
+
         name.textContent = item.name;
 
+
         const quantity = document.createElement("div");
+
         quantity.className = "sticker-quantity";
+
         quantity.textContent = item.quantity + "x";
 
+
         button.append(img, name, quantity);
+
 
         button.addEventListener("click", () => {
 
@@ -415,9 +663,14 @@ function renderInventory() {
 
             renderInventory();
 
-            showStatus("Tap your profile to place " + item.name + ".");
+            showStatus(
+                "Tap your profile to place " +
+                item.name +
+                "."
+            );
 
         });
+
 
         tray.appendChild(button);
 
@@ -427,199 +680,443 @@ function renderInventory() {
 
 
 /* =====================================
-   PLACE
+   CREATE SAVE SNAPSHOT
 ===================================== */
 
-board.addEventListener("click", async event => {
+function createSnapshot() {
 
-    if (!selectedStickerName || isSaving) return;
+    return {
+
+        stickers: INVENTORY.map(item => {
+
+            return {
+
+                name: item.name,
+
+                quantity: item.quantity,
+
+                placements: BOARD_STICKERS
+
+                    .filter(sticker =>
+                        sticker.name === item.name
+                    )
+
+                    .map(sticker => ({
+
+                        x: sticker.x,
+
+                        y: sticker.y
+
+                    }))
+
+            };
+
+        })
+
+    };
+
+}
+
+
+/* =====================================
+   VERIFY SAVED BOARD
+===================================== */
+
+function boardsMatch(expected, actual) {
+
+    if (!actual || !Array.isArray(actual.stickers)) {
+        return false;
+    }
+
+    for (const item of expected.stickers) {
+
+        const saved = actual.stickers.find(sticker =>
+
+            sticker.name.toLowerCase() ===
+            item.name.toLowerCase()
+
+        );
+
+        if (!saved) return false;
+
+        if (
+            Number(saved.quantity) !==
+            Number(item.quantity)
+        ) {
+            return false;
+        }
+
+        const expectedPositions = item.placements || [];
+
+        const savedPositions = saved.placements || [];
+
+        if (
+            expectedPositions.length !==
+            savedPositions.length
+        ) {
+            return false;
+        }
+
+        for (
+            let i = 0;
+            i < expectedPositions.length;
+            i++
+        ) {
+
+            if (
+                Number(expectedPositions[i].x) !==
+                Number(savedPositions[i].x) ||
+
+                Number(expectedPositions[i].y) !==
+                Number(savedPositions[i].y)
+            ) {
+
+                return false;
+
+            }
+
+        }
+
+    }
+
+    return true;
+
+}
+
+
+/* =====================================
+   UPDATE LOCAL INDEXES
+===================================== */
+
+function updateIndexes() {
+
+    INVENTORY.forEach(item => {
+
+        const matching = BOARD_STICKERS.filter(sticker =>
+
+            sticker.name === item.name
+
+        );
+
+        matching.forEach((sticker, index) => {
+
+            sticker.index = index + 1;
+
+        });
+
+    });
+
+}
+
+
+/* =====================================
+   SCHEDULE AUTOSAVE
+===================================== */
+
+function scheduleSave() {
+
+    if (!initialized) return;
+
+    revision++;
+
+    clearTimeout(saveTimer);
+
+    clearTimeout(retryTimer);
+
+    retryCount = 0;
+
+    showStatus("Unsaved changes...");
+
+    saveTimer = setTimeout(() => {
+
+        flushSave();
+
+    }, 500);
+
+}
+
+
+/* =====================================
+   SAVE ENGINE
+===================================== */
+
+async function flushSave() {
+
+    if (!initialized) return;
+
+    if (isSaving) return;
+
+    if (revision === savedRevision) return;
+
+
+    isSaving = true;
+
+    const savingRevision = revision;
+
+    const snapshot = createSnapshot();
+
+
+    showStatus("Saving stickers...");
+
+
+    try {
+
+        // Send the entire current board.
+        // If the iframe request times out, verification
+        // below still determines whether it saved.
+
+        await postBoard(snapshot);
+
+
+        // Independently read the board back from Sheets.
+
+        const verification = await api("getBoard");
+
+
+        if (!boardsMatch(snapshot, verification)) {
+
+            throw new Error(
+                "Google Sheets did not confirm the changes."
+            );
+
+        }
+
+
+        savedRevision = savingRevision;
+
+        retryCount = 0;
+
+
+        // Only update local indexes if no newer changes
+        // were made while this save was running.
+
+        if (revision === savingRevision) {
+
+            updateIndexes();
+
+            showStatus("Saved!");
+
+            setTimeout(() => {
+
+                if (
+                    !isSaving &&
+                    revision === savedRevision
+                ) {
+
+                    hideStatus();
+
+                }
+
+            }, 1800);
+
+        }
+
+    } catch (error) {
+
+        console.error("Sticker save failed:", error);
+
+        retryCount++;
+
+        showStatus(
+            "Save failed. Retrying..."
+        );
+
+    } finally {
+
+        isSaving = false;
+
+    }
+
+
+    // If something changed while saving, immediately
+    // save the newer board.
+
+    if (revision !== savedRevision) {
+
+        if (retryCount > 0) {
+
+            const delay = Math.min(
+                30000,
+                1500 * Math.pow(2, Math.min(retryCount - 1, 5))
+            );
+
+            clearTimeout(retryTimer);
+
+            retryTimer = setTimeout(() => {
+
+                flushSave();
+
+            }, delay);
+
+        } else {
+
+            flushSave();
+
+        }
+
+    }
+
+}
+
+
+/* =====================================
+   PLACE STICKER
+===================================== */
+
+board.addEventListener("click", event => {
+
+    if (!selectedStickerName) return;
 
     const rect = board.getBoundingClientRect();
 
-    const x = Math.max(0, Math.round(
-        event.clientX - rect.left - 50
-    ));
+    const x = Math.max(
+        0,
+        Math.round(event.clientX - rect.left - 50)
+    );
 
-    const y = Math.max(0, Math.round(
-        event.clientY - rect.top - 50
-    ));
+    const y = Math.max(
+        0,
+        Math.round(event.clientY - rect.top - 50)
+    );
 
-    await placeSticker(selectedStickerName, x, y);
+    placeSticker(selectedStickerName, x, y);
 
 });
 
 
-async function placeSticker(name, x, y) {
-
-    if (isSaving) return;
+function placeSticker(name, x, y) {
 
     const inventoryItem = INVENTORY.find(item =>
+
         item.name === name
+
     );
 
     const librarySticker = findLibrary(name);
 
-    if (!inventoryItem || inventoryItem.quantity < 1) {
+
+    if (
+        !inventoryItem ||
+        inventoryItem.quantity < 1
+    ) {
+
         selectedStickerName = null;
+
         renderInventory();
+
         return;
+
     }
+
 
     if (!librarySticker) {
+
         showStatus("Sticker image unavailable.");
+
         return;
+
     }
 
-    isSaving = true;
 
-    const oldQuantity = inventoryItem.quantity;
+    // Update instantly.
 
-    // Instant visual update.
     inventoryItem.quantity--;
 
-    const temporarySticker = {
-        name: name,
-        imageUrl: librarySticker.imageUrl,
-        index: null,
-        x: x,
-        y: y,
-        pending: true
-    };
 
-    BOARD_STICKERS.push(temporarySticker);
+    BOARD_STICKERS.push({
+
+        name: name,
+
+        imageUrl: librarySticker.imageUrl,
+
+        index: null,
+
+        x: x,
+
+        y: y
+
+    });
+
 
     selectedStickerName = null;
 
+
     renderBoard();
+
     renderInventory();
 
-    try {
 
-        const result = await api("place", {
-            sticker: name,
-            x: x,
-            y: y
-        });
+    // Save automatically.
 
-        temporarySticker.index = result.index;
-        temporarySticker.pending = false;
-
-        // Update indexes for this sticker.
-        BOARD_STICKERS
-            .filter(item => item.name === name)
-            .sort((a, b) => {
-                if (a === temporarySticker) return 1;
-                if (b === temporarySticker) return -1;
-                return a.index - b.index;
-            })
-            .forEach((item, i) => {
-                if (item !== temporarySticker && item.index === null) {
-                    item.index = i + 1;
-                }
-            });
-
-        showStatus("Sticker saved!");
-
-    } catch (error) {
-
-        BOARD_STICKERS = BOARD_STICKERS.filter(
-            item => item !== temporarySticker
-        );
-
-        inventoryItem.quantity = oldQuantity;
-
-        selectedStickerName = name;
-
-        renderBoard();
-        renderInventory();
-
-        showStatus("Couldn't save: " + error.message);
-
-    } finally {
-
-        isSaving = false;
-
-    }
+    scheduleSave();
 
 }
 
 
 /* =====================================
-   REMOVE
+   REMOVE STICKER
 ===================================== */
 
-async function returnSticker(item) {
-
-    if (isSaving) return;
-
-    if (!Number.isInteger(item.index) || item.index < 1) {
-        showStatus("Please wait for the sticker to finish saving.");
-        return;
-    }
-
-    isSaving = true;
-
-    const oldBoard = BOARD_STICKERS.slice();
+function returnSticker(item) {
 
     const inventoryItem = INVENTORY.find(entry =>
+
         entry.name === item.name
+
     );
 
-    if (!inventoryItem) {
-        isSaving = false;
-        return;
-    }
+    if (!inventoryItem) return;
 
-    const oldQuantity = inventoryItem.quantity;
 
-    // Instant visual update.
-    BOARD_STICKERS = BOARD_STICKERS.filter(
-        sticker => sticker !== item
+    // Update instantly.
+
+    BOARD_STICKERS = BOARD_STICKERS.filter(sticker =>
+
+        sticker !== item
+
     );
+
 
     inventoryItem.quantity++;
 
+
     renderBoard();
+
     renderInventory();
 
-    try {
 
-        await api("remove", {
-            sticker: item.name,
-            index: item.index
-        });
+    // Save automatically.
 
-        // Refresh indexes in the background.
-        const result = await api("getBoard");
-
-        buildBoard(result.stickers || []);
-
-        renderBoard();
-        renderInventory();
-
-        showStatus("Sticker returned!");
-
-    } catch (error) {
-
-        BOARD_STICKERS = oldBoard;
-        inventoryItem.quantity = oldQuantity;
-
-        renderBoard();
-        renderInventory();
-
-        showStatus("Couldn't remove: " + error.message);
-
-    } finally {
-
-        isSaving = false;
-
-    }
+    scheduleSave();
 
 }
 
 
 /* =====================================
-   START
+   RETRY WHEN CONNECTION RETURNS
+===================================== */
+
+window.addEventListener("online", () => {
+
+    if (revision !== savedRevision) {
+
+        showStatus("Connection restored. Saving...");
+
+        clearTimeout(retryTimer);
+
+        retryTimer = setTimeout(() => {
+
+            flushSave();
+
+        }, 300);
+
+    }
+
+});
+
+
+/* =====================================
+   INITIALIZE
 ===================================== */
 
 start();
