@@ -2,7 +2,6 @@
 <html lang="en">
 
 <head>
-
 <meta charset="UTF-8">
 
 <meta name="viewport"
@@ -148,7 +147,6 @@ body {
 }
 
 </style>
-
 </head>
 
 <body>
@@ -161,7 +159,6 @@ body {
     <div id="emptyMessage">Loading stickers...</div>
 </div>
 
-
 <script>
 
 /* =====================================
@@ -172,9 +169,7 @@ const API =
 "https://script.google.com/macros/s/AKfycbwmhyUcGkUlcLSu9JJAph3V4eoACp1afq5KaTpcAWKAgK8BqrP1v_MNMySEGgkr0E2suQ/exec";
 
 const board = document.getElementById("board");
-
 const tray = document.getElementById("stickerTray");
-
 const statusBox = document.getElementById("status");
 
 
@@ -183,25 +178,20 @@ const statusBox = document.getElementById("status");
 ===================================== */
 
 let STICKER_LIBRARY = [];
-
 let BOARD_STICKERS = [];
-
 let INVENTORY = [];
 
 let selectedStickerName = null;
 
 let revision = 0;
-
 let savedRevision = 0;
 
 let isSaving = false;
 
 let saveTimer = null;
-
 let retryTimer = null;
 
 let retryCount = 0;
-
 let initialized = false;
 
 
@@ -210,18 +200,12 @@ let initialized = false;
 ===================================== */
 
 function showStatus(message) {
-
     statusBox.textContent = message;
-
     statusBox.style.display = "block";
-
 }
 
-
 function hideStatus() {
-
     statusBox.style.display = "none";
-
 }
 
 
@@ -252,7 +236,6 @@ function api(action, params = {}) {
         const timeout = setTimeout(() => {
 
             cleanup();
-
             reject(new Error("Request timed out."));
 
         }, 25000);
@@ -305,9 +288,7 @@ function api(action, params = {}) {
 
 
 /* =====================================
-   POST SAVE
-   Uses a hidden iframe because Apps
-   Script POST responses are cross-origin.
+   POST SAVE - FIXED
 ===================================== */
 
 function postBoard(payload) {
@@ -320,9 +301,12 @@ function postBoard(payload) {
             "_" +
             Math.floor(Math.random() * 100000);
 
+
         const frame = document.createElement("iframe");
 
         frame.name = frameName;
+
+        frame.src = "about:blank";
 
         frame.style.position = "absolute";
         frame.style.width = "1px";
@@ -330,17 +314,13 @@ function postBoard(payload) {
         frame.style.opacity = "0";
         frame.style.pointerEvents = "none";
 
-        document.body.appendChild(frame);
-
+        frame.style.border = "0";
 
         const form = document.createElement("form");
 
         form.method = "POST";
-
         form.action = API;
-
         form.target = frameName;
-
         form.style.display = "none";
 
 
@@ -359,13 +339,13 @@ function postBoard(payload) {
 
 
         form.appendChild(actionInput);
-
         form.appendChild(payloadInput);
 
-        document.body.appendChild(form);
 
-
+        let submitted = false;
         let finished = false;
+
+        let timeout;
 
 
         function cleanup() {
@@ -374,16 +354,57 @@ function postBoard(payload) {
 
             finished = true;
 
-            frame.removeEventListener("load", onLoad);
+            clearTimeout(timeout);
+
+            frame.removeEventListener("load", handleLoad);
 
             form.remove();
-
             frame.remove();
 
         }
 
 
-        function onLoad() {
+        function fail(error) {
+
+            cleanup();
+
+            reject(error);
+
+        }
+
+
+        function handleLoad() {
+
+            // First load is the blank iframe.
+            // Only submit after that load finishes.
+
+            if (!submitted) {
+
+                submitted = true;
+
+                setTimeout(() => {
+
+                    if (finished) return;
+
+                    try {
+
+                        form.submit();
+
+                    } catch (error) {
+
+                        fail(error);
+
+                    }
+
+                }, 100);
+
+                return;
+
+            }
+
+
+            // A later load means the POST navigated
+            // the iframe to the Apps Script response.
 
             cleanup();
 
@@ -392,44 +413,23 @@ function postBoard(payload) {
         }
 
 
-        frame.addEventListener("load", onLoad);
+        frame.addEventListener("load", handleLoad);
 
 
-        const timeout = setTimeout(() => {
+        // Start timeout BEFORE waiting for the iframe.
 
-            cleanup();
+        timeout = setTimeout(() => {
 
-            resolve();
+            fail(
+                new Error("Google Sheets save request timed out.")
+            );
 
-        }, 20000);
-
-
-        const originalCleanup = cleanup;
-
-        cleanup = function() {
-
-            clearTimeout(timeout);
-
-            originalCleanup();
-
-        };
+        }, 30000);
 
 
-        setTimeout(() => {
+        document.body.appendChild(frame);
 
-            try {
-
-                form.submit();
-
-            } catch (error) {
-
-                cleanup();
-
-                reject(error);
-
-            }
-
-        }, 100);
+        document.body.appendChild(form);
 
     });
 
@@ -507,7 +507,6 @@ async function start() {
 function buildBoard(data) {
 
     INVENTORY = [];
-
     BOARD_STICKERS = [];
 
     data.forEach(item => {
@@ -728,6 +727,7 @@ function boardsMatch(expected, actual) {
         return false;
     }
 
+
     for (const item of expected.stickers) {
 
         const saved = actual.stickers.find(sticker =>
@@ -739,6 +739,7 @@ function boardsMatch(expected, actual) {
 
         if (!saved) return false;
 
+
         if (
             Number(saved.quantity) !==
             Number(item.quantity)
@@ -746,9 +747,11 @@ function boardsMatch(expected, actual) {
             return false;
         }
 
+
         const expectedPositions = item.placements || [];
 
         const savedPositions = saved.placements || [];
+
 
         if (
             expectedPositions.length !==
@@ -757,6 +760,7 @@ function boardsMatch(expected, actual) {
             return false;
         }
 
+
         for (
             let i = 0;
             i < expectedPositions.length;
@@ -764,11 +768,13 @@ function boardsMatch(expected, actual) {
         ) {
 
             if (
+
                 Number(expectedPositions[i].x) !==
                 Number(savedPositions[i].x) ||
 
                 Number(expectedPositions[i].y) !==
                 Number(savedPositions[i].y)
+
             ) {
 
                 return false;
@@ -780,6 +786,55 @@ function boardsMatch(expected, actual) {
     }
 
     return true;
+
+}
+
+
+/* =====================================
+   VERIFY WITH RETRIES
+===================================== */
+
+async function verifySavedBoard(snapshot) {
+
+    let lastError = null;
+
+    for (let attempt = 0; attempt < 8; attempt++) {
+
+        try {
+
+            const result = await api("getBoard");
+
+            if (boardsMatch(snapshot, result)) {
+
+                return true;
+
+            }
+
+        } catch (error) {
+
+            lastError = error;
+
+        }
+
+
+        // Give Google Sheets more time to finish writing.
+
+        await new Promise(resolve =>
+
+            setTimeout(resolve, 900)
+
+        );
+
+    }
+
+
+    if (lastError) {
+
+        throw lastError;
+
+    }
+
+    return false;
 
 }
 
@@ -861,22 +916,20 @@ async function flushSave() {
 
     try {
 
-        // Send the entire current board.
-        // If the iframe request times out, verification
-        // below still determines whether it saved.
+        // Send the complete board.
 
         await postBoard(snapshot);
 
 
-        // Independently read the board back from Sheets.
+        // Check that Google Sheets actually saved it.
 
-        const verification = await api("getBoard");
+        const verified = await verifySavedBoard(snapshot);
 
 
-        if (!boardsMatch(snapshot, verification)) {
+        if (!verified) {
 
             throw new Error(
-                "Google Sheets did not confirm the changes."
+                "Google Sheets could not confirm the save."
             );
 
         }
@@ -886,9 +939,6 @@ async function flushSave() {
 
         retryCount = 0;
 
-
-        // Only update local indexes if no newer changes
-        // were made while this save was running.
 
         if (revision === savingRevision) {
 
@@ -928,8 +978,8 @@ async function flushSave() {
     }
 
 
-    // If something changed while saving, immediately
-    // save the newer board.
+    // Save any changes made while the previous
+    // request was still running.
 
     if (revision !== savedRevision) {
 
@@ -1018,8 +1068,6 @@ function placeSticker(name, x, y) {
     }
 
 
-    // Update instantly.
-
     inventoryItem.quantity--;
 
 
@@ -1046,8 +1094,6 @@ function placeSticker(name, x, y) {
     renderInventory();
 
 
-    // Save automatically.
-
     scheduleSave();
 
 }
@@ -1068,8 +1114,6 @@ function returnSticker(item) {
     if (!inventoryItem) return;
 
 
-    // Update instantly.
-
     BOARD_STICKERS = BOARD_STICKERS.filter(sticker =>
 
         sticker !== item
@@ -1084,8 +1128,6 @@ function returnSticker(item) {
 
     renderInventory();
 
-
-    // Save automatically.
 
     scheduleSave();
 
